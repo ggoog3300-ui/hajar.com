@@ -23,7 +23,7 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function loadCart(){try{const c=JSON.parse(fx.store.get('kh-cart')||'{}');return c&&typeof c==='object'?c:{}}catch(e){return{}}}
 function saveCart(){fx.store.set('kh-cart',JSON.stringify(cart))}
-let sb=null,products=demoProducts,cats=fallbackCats,selected='الكل',term='',cart=loadCart(),zones=[],live=false,done=null,toastT;
+let sb=null,products=[],cats=fallbackCats,selected='الكل',term='',cart=loadCart(),zones=[],live=false,done=null,toastT;
 const prod=id=>products.find(p=>String(p.id)===String(id));
 
 /* ---------- رسائل ---------- */
@@ -37,11 +37,21 @@ async function init(){
   $('storePhone').textContent=cfg.STORE_PHONE||'أضف رقم المتجر';
   skeleton();
   if(window.supabase&&configured()){
-    try{sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);await loadCatalog()}
-    catch(e){notice('تعذر الاتصال بقاعدة البيانات. تُعرض منتجات تجريبية مؤقتاً.')}
-  }else notice('الموقع يعمل بمنتجات تجريبية حالياً. أكمل إعداد config.js وربط Supabase لتفعيل الطلبات الحقيقية.');
+    try{
+      sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
+      await loadCatalog();
+      notice(`متصل بقاعدة البيانات ✅ — المنتجات المحمّلة: ${products.length}`);
+    }catch(e){
+      live=false;products=[];cats=fallbackCats;
+      console.error('Khudarna Supabase catalog error:',e);
+      notice('تعذر تحميل بيانات Supabase: '+(e?.message||e?.details||'خطأ غير معروف')+' — تأكد من الجداول والصلاحيات (RLS) ومفتاح النشر.');
+    }
+  }else {
+    products=[];
+    notice('Supabase غير مضبوط: تحقق من رابط المشروع ومفتاح النشر العام في config.js.');
+  }
   Object.keys(cart).forEach(id=>{if(!prod(id))delete cart[id]});saveCart();
-  renderCats();renderProducts();renderCart();loadZones();
+  renderCats();renderProducts();renderCart();await loadZones();
 }
 async function loadCatalog(){
   const {data:cs,error:ce}=await sb.from('categories').select('id,name,emoji').eq('active',true).order('sort_order');if(ce)throw ce;
@@ -51,8 +61,9 @@ async function loadCatalog(){
   live=true;
 }
 async function loadZones(){
-  if(!sb)return;
-  const {data}=await sb.from('delivery_zones').select('id,name,fee_iqd').eq('active',true).order('name');
+  if(!sb||!live)return;
+  const {data,error}=await sb.from('delivery_zones').select('id,name,fee_iqd').eq('active',true).order('name');
+  if(error){console.error('Khudarna Supabase delivery zones error:',error);notice('تم تحميل المنتجات لكن تعذّر تحميل مناطق التوصيل: '+(error.message||'تحقق من صلاحيات الجدول'));return}
   zones=data||[];
   const a=$('area');if(a){const v=a.value;a.innerHTML=zoneOptions();a.value=v;updateSum()}
 }
@@ -143,7 +154,7 @@ function successView(){
 }
 async function submitOrder(e){
   e.preventDefault();
-  if(!sb||!live){say('الطلبات غير مفعّلة بعد. أكمل إعداد Supabase في config.js أولاً.','err');return}
+  if(!sb||!live){say('المتجر غير متصل بقاعدة البيانات؛ راجع رسالة حالة الاتصال أعلى الصفحة.','err');return}
   const f=new FormData(e.currentTarget),area=f.get('area'),zone=zones.find(z=>z.name===area);
   if(!zone&&area!=='other'){say('اختر منطقة صحيحة','err');return}
   const items=cartLines().map(({p,q})=>({product_id:p.id,quantity:q}));
@@ -157,7 +168,7 @@ async function submitOrder(e){
     document.querySelectorAll('.product').forEach(c=>refreshCard(c.dataset.id));
     renderCart();fx.confetti();say('تم تسجيل طلبك بنجاح. رقم الطلب: '+done);
   }catch(err){
-    console.error(err);say('تعذر إرسال الطلب. تحقق من إعداد Edge Function والاتصال.','err');
+    console.error('Khudarna create-order error:',err);say('تعذر إرسال الطلب: '+(err?.message||'تحقق من نشر وظيفة create-order وإعداداتها'),'err');
     button.disabled=false;button.textContent='تأكيد الطلب نقداً عند الاستلام';button.classList.remove('loading');
   }
 }
